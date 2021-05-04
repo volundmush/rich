@@ -87,6 +87,7 @@ DEFAULT_STYLES: Dict[str, Style] = {
     "repr.filename": Style(color="bright_magenta"),
     "rule.line": Style(color="bright_green"),
     "rule.text": Style.null(),
+    "log": Style.null(),
     "prompt": Style.null(),
     "prompt.choices": Style(color="magenta", bold=True),
     "prompt.default": Style(color="cyan", bold=True),
