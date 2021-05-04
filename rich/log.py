@@ -3,9 +3,9 @@ from typing import Iterable, List, Optional
 
 from . import get_console
 from .console import Console, ConsoleOptions, RenderableType, RenderResult
+from .jupyter import JupyterMixin
 from .segment import Segment
 from .style import StyleType
-from .jupyter import JupyterMixin
 
 
 class Log(JupyterMixin):
@@ -41,14 +41,14 @@ class Log(JupyterMixin):
             *renderables (RenderableType): Any renderable type.
         """
         with self._lock:
-            lines = self._render(console, renderables)
-            self._buffer.extend(lines)
+            self._buffer.extend(self._render(self.console, renderables))
             if self.scrollback is not None:
                 del self._buffer[: -self.scrollback]
 
     def _render(
         self, console: Console, renderables: Iterable[RenderableType]
     ) -> List[List[Segment]]:
+        """Render a number of renderables with the given console."""
         rendered_lines: List[List[Segment]] = []
         style = console.get_style(self.style)
         for renderable in renderables:
@@ -67,11 +67,12 @@ class Log(JupyterMixin):
 
 if __name__ == "__main__":
 
-    from rich.console import Console
-    from rich.live import Live
-    from rich.layout import Layout
-    from rich.table import Table
     from time import sleep
+
+    from rich.console import Console
+    from rich.layout import Layout
+    from rich.live import Live
+    from rich.table import Table
 
     table = Table(
         title="Star Wars Movies",
