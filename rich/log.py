@@ -1,6 +1,7 @@
 from threading import RLock
-from typing import List, Optional
+from typing import Iterable, List, Optional
 
+from . import get_console
 from .console import Console, ConsoleOptions, RenderableType, RenderResult
 from .segment import Segment
 from .style import StyleType
@@ -8,49 +9,59 @@ from .jupyter import JupyterMixin
 
 
 class Log(JupyterMixin):
-    """A log view of renderables.
+    """A log view of renderables. When you :meth:`~rich.log.Log.add` add a renderable, it will be
+    immediately rendered and stored in a buffer to be displayed when the Log itself is rendered.
+    The effect is similar to the normal operation of terminals with a scrolling buffer, but can be
+    displayed within another renderable, such as :class:`~rich.layout.Layout`.
 
     Args:
-        scrollback (int): Maximum number of lines to store before discarding. Or
-            None for infinite. Defaults to 1000.
+        scrollback (int): Maximum number of lines to store before discarding. Or ``None`` for infinite.
+            Defaults to 1000.
         style (Style): Style of log.
+        console (Console): The console use when rendering.
     """
 
     def __init__(
-        self, scrollback: Optional[int] = 1000, *, style: StyleType = "log"
+        self,
+        scrollback: Optional[int] = 1000,
+        *,
+        style: StyleType = "log",
+        console: Optional[Console] = None
     ) -> None:
         self.scrollback = scrollback
         self.style = style
-        self._buffer: List[RenderableType] = []
-        self._line_buffer: List[List[Segment]] = []
+        self.console = console or get_console()
+        self._buffer: List[List[Segment]] = []
         self._lock = RLock()
 
-    def add(self, renderable: RenderableType) -> None:
+    def add(self, *renderables: RenderableType) -> None:
         """Add a renderable to the log.
 
         Args:
-            renderable (RenderableType): Any renderable type.
+            *renderables (RenderableType): Any renderable type.
         """
         with self._lock:
-            self._buffer.append(renderable)
-
-    def _render_buffer(self, console: Console, options: "ConsoleOptions") -> None:
-        if self._buffer:
-            style = console.get_style(self.style)
-            for renderable in self._buffer:
-                lines = console.render_lines(renderable, style=style, new_lines=True)
-                self._line_buffer.extend(lines)
+            lines = self._render(console, renderables)
+            self._buffer.extend(lines)
             if self.scrollback is not None:
-                del self._line_buffer[: -self.scrollback]
-            del self._buffer[:]
+                del self._buffer[: -self.scrollback]
+
+    def _render(
+        self, console: Console, renderables: Iterable[RenderableType]
+    ) -> List[List[Segment]]:
+        rendered_lines: List[List[Segment]] = []
+        style = console.get_style(self.style)
+        for renderable in renderables:
+            lines = console.render_lines(renderable, style=style, new_lines=True)
+            rendered_lines.extend(lines)
+        return rendered_lines
 
     def __rich_console__(
         self, console: "Console", options: "ConsoleOptions"
     ) -> "RenderResult":
         height = options.height or console.height
         with self._lock:
-            self._render_buffer(console, options)
-            for line in self._line_buffer[-height:]:
+            for line in self._buffer[-height:]:
                 yield from line
 
 
@@ -84,6 +95,9 @@ if __name__ == "__main__":
     log = Log()
     layout = Layout()
     layout.split_row(Layout(name="demo"), Layout(log, name="log"))
+
+    log.add("hello", "world")
+    console.print(layout)
 
     with Live(layout, refresh_per_second=20, screen=True):
         while True:
