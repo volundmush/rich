@@ -25,10 +25,12 @@ class Log(JupyterMixin):
         self,
         scrollback: Optional[int] = 1000,
         *,
+        width: Optional[int] = None,
         style: StyleType = "log",
         console: Optional[Console] = None
     ) -> None:
         self.scrollback = scrollback
+        self.width = width
         self.style = style
         self.console = console or get_console()
         self._buffer: List[List[Segment]] = []
@@ -51,8 +53,13 @@ class Log(JupyterMixin):
         """Render a number of renderables with the given console."""
         rendered_lines: List[List[Segment]] = []
         style = console.get_style(self.style)
+        options = console.options
+        if self.width is not None:
+            options = console.options.update_width(self.width)
         for renderable in renderables:
-            lines = console.render_lines(renderable, style=style, new_lines=True)
+            lines = console.render_lines(
+                renderable, options=options, style=style, new_lines=True
+            )
             rendered_lines.extend(lines)
         return rendered_lines
 
