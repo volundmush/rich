@@ -32,7 +32,7 @@ class MXP:
     """A MXP tag, for MUD support."""
     _esc = "\x1b[4z"
 
-    def __init__(self, tag: str, args: str = "", attrs: dict[str, str] = None):
+    def __init__(self, tag: str = "send", args: str = "", attrs: dict[str, str] = None):
         self.tag = tag
         self.args = args
         self.attrs = attrs or dict()
@@ -53,6 +53,16 @@ class MXP:
         out_innards = f" {out_innards}" if out_innards else ""
 
         return f"{self._esc}<{self.tag}{out_innards}>{text}{self._esc}</{self.tag}>"
+
+    def serialize(self):
+        out = dict()
+        if self.tag:
+            out['tag'] = self.tag
+        if self.args:
+            out['args'] = self.args
+        if self.attrs:
+            out['attrs'] = self.attrs
+        return out
 
 
 @rich_repr
@@ -534,9 +544,28 @@ class Style:
         style._hash = None
         return style
 
+    def serialize(self) -> (str, dict):
+        """Serialize style to a string and a dict."""
+        out = dict()
+        if self._mxp:
+            out['mxp'] = self._mxp.serialize()
+        if self._meta:
+            out['meta'] = self.meta
+        return str(self), out
+
+    @classmethod
+    def deserialize(cls, data) -> "Style":
+        text, metadata = data
+        mxp = metadata.get('mxp', None)
+        if mxp:
+            mxp = MXP(**mxp)
+        meta = metadata.get('meta', None)
+        return cls.parse(text, meta=meta, mxp=mxp)
+
+
     @classmethod
     @lru_cache(maxsize=4096)
-    def parse(cls, style_definition: str) -> "Style":
+    def parse(cls, style_definition: str, meta: dict=None, mxp=None) -> "Style":
         """Parse a style definition.
 
         Args:
@@ -598,7 +627,7 @@ class Style:
                         f"unable to parse {word!r} as color; {error}"
                     ) from None
                 color = word
-        style = Style(color=color, bgcolor=bgcolor, link=link, **attributes)
+        style = Style(color=color, bgcolor=bgcolor, link=link, mxp=mxp, meta=meta, **attributes)
         return style
 
     @lru_cache(maxsize=1024)

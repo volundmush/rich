@@ -11,6 +11,8 @@ from typing import (
     Union,
 )
 
+import evennia
+
 from . import box, errors
 from ._loop import loop_first_last, loop_last
 from ._pick import pick_bool
@@ -34,6 +36,27 @@ if TYPE_CHECKING:
         RenderResult,
     )
 
+_SHARED_PROPERTIES = {'footer_style', 'min_width', 'style', 'width', 'header_style'}
+_COLUMN_PROPERTIES = {'footer', 'overflow', 'ratio', 'justify', 'vertical', 'header', 'no_wrap', 'max_width'}
+_TABLE_PROPERTIES = {'show_header', 'leading', 'caption_justify', 'title', 'show_lines', 'caption_style', 'expand',
+                     'border_style', 'highlight', 'show_edge', 'show_footer', 'caption', 'box', 'pad_edge', 'safe_box',
+                     'collapse_padding', 'padding', 'title_style', 'title_justify'}
+
+_PROPERTY_DEFAULTS = {
+    "box": box.HEAVY_HEAD,
+    "safe_box": True,
+    "collapse_padding": False,
+    "pad_edge": True,
+    "expand": False,
+    "show_header": True,
+    "show_footer": False,
+    "show_edge": True,
+    "show_lines": False,
+    "leading": 0,
+    "title_justify": "center",
+    "caption_justify": "center",
+    "highlight": False
+}
 
 @dataclass
 class Column:
@@ -125,6 +148,78 @@ class Column:
         """Check if this column is flexible."""
         return self.ratio is not None
 
+    def serialize(self) -> dict:
+        out = dict()
+
+        properties = set()
+        properties.update(_SHARED_PROPERTIES)
+        properties.update(_COLUMN_PROPERTIES)
+
+        for k in properties:
+            v = getattr(self, k, None)
+            match k:
+                case "header" | "footer":
+                    if isinstance(k, str) and v:
+                        out[k] = v
+                    elif hasattr(v, "__rich_console__"):
+                        out[k] = (getattr(v, "sendable_name", v.__class__.__name__), v.serialize())
+                case _:
+                    if v is None:
+                        continue
+                    if "styles" in k:
+                        new_list = list()
+                        for row in v or list():
+                            if isinstance(row, str):
+                                new_list.append(row)
+                            else:
+                                new_list.append(row.serialize())
+                        if new_list:
+                            out[k] = new_list
+                    elif "style" in k:
+                        if isinstance(v, str):
+                            if v in ("none", ""):
+                                continue
+                            out[k] = v
+                        else:
+                            out[k] = v.serialize()
+                    else:
+                        default = _PROPERTY_DEFAULTS.get(k, None)
+                        if v is None and default is None:
+                            continue
+                        elif v == default:
+                            continue
+                        else:
+                            out[k] = v
+        return out
+
+    @classmethod
+    def deserialize(cls, data: dict) -> "Column":
+        d_data = data.copy()
+
+        for k in ("header_style", "footer_style", "border_style", "title_style", "caption_style"):
+            v = d_data.get(k, None)
+            if v is None:
+                continue
+            if not isinstance(v, str):
+                d_data[k] = Style.deserialize(v)
+
+        for k in ("header", "footer"):
+            v = d_data.get(k, None)
+            if v is None:
+                continue
+            if isinstance(v, str):
+                d_data[k] = Text(v)
+            else:
+                sendable_name, sendable_data = v
+                sendable_class = evennia.SENDABLES[sendable_name]
+                d_data[k] = sendable_class.deserialize_sendable(sendable_data)
+
+        row_styles = d_data.get("row_styles", list())
+        if row_styles:
+            d_data["row_styles"] = [Style.deserialize(row) if not isinstance(row, str) else row for row in row_styles]
+
+        return cls(**d_data)
+
 
 @dataclass
 class Row:
@@ -135,6 +230,18 @@ class Row:
 
     end_section: bool = False
     """Indicated end of section, which will force a line beneath the row."""
+
+    def serialize(self):
+        out = dict()
+        if self.style:
+            out["style"] = self.style
+        if self.end_section:
+            out["end_section"] = True
+        return out
+
+    @classmethod
+    def deserialize(cls, data: dict) -> "Row":
+        return cls(**data)
 
 
 class _Cell(NamedTuple):
@@ -179,9 +286,12 @@ class Table(JupyterMixin):
         caption_justify (str, optional): Justify method for caption. Defaults to "center".
         highlight (bool, optional): Highlight cell contents (if str). Defaults to False.
     """
-
     columns: List[Column]
     rows: List[Row]
+
+    # Evennia data
+    render_types = ("ansi", "json", "html")
+    sendable_name = "RichTable"
 
     def __init__(
         self,
@@ -246,6 +356,111 @@ class Table(JupyterMixin):
             else:
                 header._index = len(self.columns)
                 append_column(header)
+
+    def serialize_sendable(self):
+        out = dict()
+
+        properties = set()
+        properties.update(_SHARED_PROPERTIES)
+        properties.update(_TABLE_PROPERTIES)
+
+        for k in properties:
+            v = getattr(self, k, None)
+            match k:
+                case "title" | "caption":
+                    if hasattr(v, "__rich_console__"):
+                        out[k] = v.serialize_sendable()
+                    elif isinstance(v, str) and v:
+                        out[k] = v
+                case "padding":
+                    if self._padding:
+                        out[k] = self._padding
+                case _:
+                    if v is None:
+                        continue
+                    if "styles" in k:
+                        new_list = list()
+                        for row in v or list():
+                            if isinstance(row, str):
+                                new_list.append(row)
+                            else:
+                                new_list.append(row.serialize())
+                        if new_list:
+                            out[k] = new_list
+                    elif "style" in k:
+                        if isinstance(v, str):
+                            if v in ("none", ""):
+                                continue
+                            out[k] = v
+                        else:
+                            out[k] = v.serialize()
+                    else:
+                        default = _PROPERTY_DEFAULTS.get(k, None)
+                        if v is None and default is None:
+                            continue
+                        elif v == default:
+                            continue
+                        else:
+                            out[k] = v
+
+        columns = [col.serialize() for col in self.columns]
+        if columns:
+            out["columns"] = columns
+
+        rows = list()
+        for i, row in enumerate(self.rows):
+            renderables = list()
+            r = row.serialize()
+
+            for col in self.columns:
+                renderables.append(col._cells[i])
+            if renderables:
+                r["renderables"] = renderables
+
+        if rows:
+            out["rows"] = rows
+
+        return self.sendable_name, out
+
+    @classmethod
+    def deserialize_sendable(cls, data):
+        columns = data.pop("columns", list())
+        rows = data.pop("rows", list())
+
+        new_data = dict()
+        for k, v in data.items():
+            match k:
+                case "title" | "caption":
+                    if v is None:
+                        continue
+                    if isinstance(v, str):
+                        new_data[k] = Text(v)
+                    else:
+                        sendable_name, sendable_data = v
+                        sendable_class = evennia.SENDABLES[sendable_name]
+                        new_data[k] = sendable_class.deserialize_sendable(sendable_data)
+                case _:
+                    if "styles" in k:
+                        new_data[k] = [Style.deserialize(row) if not isinstance(row, str) else row for row in v]
+                    elif "style" in k:
+                        new_data[k] = Style.deserialize(v) if not isinstance(v, str) else v
+                    else:
+                        new_data[k] = v
+
+        table = cls(**new_data)
+
+        for column in columns:
+            table.add_column(**column)
+
+        for row in rows:
+            renderables = row.get("renderables", list())
+            style = row.get("style", None)
+            if style:
+                style = Style.deserialize(style) if not isinstance(style, str) else style
+            end_section = row.get("end_section", False)
+            table.add_row(*renderables, style=style, end_section=end_section)
+
+        return table
 
     @classmethod
     def grid(

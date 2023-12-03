@@ -15,6 +15,7 @@ from typing import (
     Tuple,
     Union,
 )
+from lxml import etree
 
 from ._loop import loop_last
 from ._pick import pick_bool
@@ -116,6 +117,9 @@ class Span(NamedTuple):
         else:
             return self
 
+    def serialize(self):
+        return (self.start, self.end, self.style.serialize())
+
 
 class Text(JupyterMixin):
     """Text with color / style.
@@ -130,6 +134,8 @@ class Text(JupyterMixin):
         tab_size (int): Number of spaces per tab, or ``None`` to use ``console.tab_size``. Defaults to None.
         spans (List[Span], optional). A list of predefined style spans. Defaults to None.
     """
+    render_types = ("ansi", "html", "json")
+    sendable_name = "RichText"
 
     __slots__ = [
         "_text",
@@ -165,6 +171,35 @@ class Text(JupyterMixin):
         self.tab_size = tab_size
         self._spans: List[Span] = spans or []
         self._length: int = len(sanitized_text)
+
+    def serialize_sendable(self):
+        out = dict()
+        out["text"] = self.plain
+        spans = [span.serialize() for span in self._spans]
+        if spans:
+            out["spans"] = spans
+        if self.style:
+            out["style"] = self.style if isinstance(self.style, str) else self.style.serialize()
+        if self.justify:
+            out["justify"] = self.justify
+        if self.overflow:
+            out["overflow"] = self.overflow
+        if self.no_wrap:
+            out["no_wrap"] = self.no_wrap
+        if self.end != "\n":
+            out["end"] = self.end
+        if self.tab_size is not None:
+            out["tab_size"] = self.tab_size
+        return self.sendable_name, out
+
+    @classmethod
+    def deserialize_sendable(cls, data):
+        text = data.pop("text", "")
+        style = data.pop("style", "")
+        if style and not isinstance(style, str):
+            style = Style.deserialize(style)
+        spans = [Span(*span) for span in data.pop("spans", list())]
+        return cls(text=text, style=style, spans=spans, **data)
 
     def __len__(self) -> int:
         return self._length
@@ -740,6 +775,18 @@ class Text(JupyterMixin):
         )
         all_lines = Text("\n").join(lines)
         yield from all_lines.render(console, end=self.end)
+
+    def render_as_ansi(self, session, metadata) -> str:
+        return session.print(self)
+
+    def export_as_html(self, session, metadata) -> etree.Element:
+        html = etree.fromstring(session.print_html(self))
+        return html
+
+    def render_as_html(self, session, metadata) -> str:
+        return etree.tostring(self.export_as_html(session, metadata))
+
+    render_as_json = render_as_html
 
     def __rich_measure__(
         self, console: "Console", options: "ConsoleOptions"
@@ -1579,22 +1626,6 @@ class Text(JupyterMixin):
             out["spans"] = out_spans
 
         return out
-
-    @classmethod
-    def deserialize(cls, data) -> "Text":
-        text = data.get("text", None)
-        if text is None:
-            return cls("")
-        style = data.get("style", None)
-        if style:
-            style = Style(**style)
-
-        spans = data.get("spans", None)
-
-        if spans:
-            spans = [Span(s["start"], s["end"], Style(**s["style"])) for s in spans]
-
-        return cls(text=text, style=style, spans=spans)
 
     def squish(self) -> "MudText":
         """
